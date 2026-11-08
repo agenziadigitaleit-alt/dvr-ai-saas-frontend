@@ -45,7 +45,7 @@ async function handleNuovoDVR() {
           <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
             {[
               { icon: Clock, title: '13 step guidati', desc: 'Raccogliamo tutti i dati necessari in modo semplice' },
-              { icon: Shield, title: 'AI generativa', desc: 'Il DVR viene redatto automaticamente da Claude AI' },
+              { icon: Shield, title: 'AI generativa', desc: 'Il DVR viene redatto automaticamente da un agente AI esperto del D.Lgs. 81/08' },
               { icon: FileText, title: 'PDF pronto', desc: 'Scarica il documento finito, pronto per la firma' },
             ].map(({ icon: Icon, title, desc }) => (
               <div key={title} className="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
