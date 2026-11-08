@@ -4,15 +4,17 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   Shield, ArrowLeft, Calendar, FileText, QrCode,
-  CheckCircle, AlertTriangle, Clock, Clipboard, LogOut, Plus,
+  CheckCircle, AlertTriangle, Clock, Clipboard, LogOut, Plus, Building2,
+  Mail, Copy, X, Loader2,
 } from 'lucide-react';
 import {
   getAzienda, getScadenze, getVerbali, getCompliance,
-  completaScadenza, Azienda, Scadenza, Verbale, ComplianceReport,
+  completaScadenza, getSedi, generaPec, generaPecByCodice,
+  Azienda, Scadenza, Verbale, ComplianceReport, Sede, PecOutput, Adempimento,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 
-type Tab = 'scadenzario' | 'verbali' | 'compliance' | 'vault';
+type Tab = 'scadenzario' | 'verbali' | 'compliance' | 'vault' | 'sedi';
 
 const STATO_CONFIG = {
   completata: { label: 'Completata', bg: 'bg-green-900/40', border: 'border-green-700', text: 'text-green-300' },
@@ -31,8 +33,14 @@ export default function AziendaPage() {
   const [scadenze, setScadenze] = useState<Scadenza[]>([]);
   const [verbali, setVerbali] = useState<Verbale[]>([]);
   const [compliance, setCompliance] = useState<ComplianceReport | null>(null);
+  const [sedi, setSedi] = useState<Sede[]>([]);
   const [tab, setTab] = useState<Tab>('scadenzario');
   const [loading, setLoading] = useState(true);
+
+  // PEC modale
+  const [pecLoading, setPecLoading] = useState<string | null>(null); // adempimento_id in generazione
+  const [pecModal, setPecModal] = useState<{ adTitolo: string; pec: PecOutput } | null>(null);
+  const [pecCopied, setPecCopied] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -41,11 +49,13 @@ export default function AziendaPage() {
       getScadenze(id),
       getVerbali(id),
       getCompliance(id),
-    ]).then(([az, sc, vb, co]) => {
+      getSedi(id).catch(() => [] as Sede[]),
+    ]).then(([az, sc, vb, co, sd]) => {
       setAzienda(az);
       setScadenze(sc);
       setVerbali(vb);
       setCompliance(co);
+      setSedi(sd);
     }).catch(() => router.push('/dashboard'))
       .finally(() => setLoading(false));
   }, [id, router]);
@@ -59,6 +69,39 @@ export default function AziendaPage() {
   const FRONTEND_URL = typeof window !== 'undefined' ? window.location.origin : '';
   const vaultUrl = azienda?.qr_token ? `${FRONTEND_URL}/vault/${azienda.qr_token}` : null;
 
+  async function handleGeneraPec(a: Adempimento) {
+    if (!id) return;
+    const key = a.id || a.codice;
+    setPecLoading(key);
+    try {
+      let pec: PecOutput;
+      if (a.id) {
+        pec = await generaPec(id, a.id);
+      } else {
+        pec = await generaPecByCodice(id, {
+          codice: a.codice,
+          titolo: a.titolo,
+          riferimento: a.riferimento,
+          descrizione: a.descrizione,
+          sanzione_datore: a.sanzione_datore,
+          rischio_penale: a.rischio_penale,
+        });
+      }
+      setPecModal({ adTitolo: a.titolo, pec });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Errore generazione PEC');
+    } finally {
+      setPecLoading(null);
+    }
+  }
+
+  function copyPec() {
+    if (!pecModal) return;
+    navigator.clipboard.writeText(`OGGETTO: ${pecModal.pec.oggetto}\n\n${pecModal.pec.corpo}`);
+    setPecCopied(true);
+    setTimeout(() => setPecCopied(false), 2000);
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
@@ -69,6 +112,7 @@ export default function AziendaPage() {
 
   const tabs: { key: Tab; label: string; icon: typeof Calendar }[] = [
     { key: 'scadenzario', label: 'Scadenzario', icon: Calendar },
+    { key: 'sedi', label: 'Sedi', icon: Building2 },
     { key: 'verbali', label: 'Verbali', icon: FileText },
     { key: 'compliance', label: 'Compliance', icon: Clipboard },
     { key: 'vault', label: 'QR Vault', icon: QrCode },
@@ -276,15 +320,82 @@ export default function AziendaPage() {
                       {a.priorita}
                     </span>
                   </div>
-                  <div className="mt-2 pt-2 border-t border-slate-700/50 text-xs text-slate-400">
-                    Sanzione: <span className="text-yellow-400">{a.sanzione_datore}</span>
-                    {a.rischio_penale && (
-                      <span className="ml-3 text-orange-400">⚠ Rischio penale</span>
+                  <div className="mt-2 pt-2 border-t border-slate-700/50 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="text-xs text-slate-400">
+                      Sanzione: <span className="text-yellow-400">{a.sanzione_datore}</span>
+                      {a.rischio_penale && (
+                        <span className="ml-3 text-orange-400">⚠ Rischio penale</span>
+                      )}
+                    </div>
+                    {a.stato !== 'conforme' && (
+                      <button
+                        onClick={() => handleGeneraPec(a)}
+                        disabled={pecLoading === (a.id || a.codice)}
+                        className="flex items-center gap-1.5 text-xs font-medium bg-red-900/40 hover:bg-red-800/60 text-red-300 border border-red-700/60 px-3 py-1 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        {pecLoading === (a.id || a.codice)
+                          ? <Loader2 size={11} className="animate-spin" />
+                          : <Mail size={11} />}
+                        Genera PEC (5 cr)
+                      </button>
                     )}
                   </div>
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* ── SEDI ── */}
+        {tab === 'sedi' && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-semibold">Sedi operative</h2>
+              <button
+                onClick={() => router.push(`/sedi/nuova?azienda_id=${id}`)}
+                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
+              >
+                <Plus size={14} />
+                Nuova sede
+              </button>
+            </div>
+            {sedi.length === 0 ? (
+              <div className="text-center py-16">
+                <Building2 size={40} className="text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-500 text-sm">Nessuna sede registrata</p>
+                <p className="text-slate-600 text-xs mt-1">Aggiungi la prima sede per gestire dipendenti e figure di sicurezza</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {sedi.map(sede => (
+                  <div
+                    key={sede.id}
+                    onClick={() => router.push(`/sedi/${sede.id}`)}
+                    className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-center justify-between cursor-pointer hover:border-slate-600 transition-colors"
+                  >
+                    <div>
+                      <div className="font-medium text-sm text-white">{sede.nome}</div>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        {[sede.indirizzo, sede.citta, sede.provincia].filter(Boolean).join(', ')}
+                      </div>
+                      {sede.n_dipendenti != null && (
+                        <div className="text-xs text-slate-500 mt-0.5">{sede.n_dipendenti} dipendenti</div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                        sede.attiva
+                          ? 'bg-green-900/40 text-green-300 border-green-700'
+                          : 'bg-slate-700 text-slate-400 border-slate-600'
+                      }`}>
+                        {sede.attiva ? 'Attiva' : 'Inattiva'}
+                      </span>
+                      <ArrowLeft size={16} className="text-slate-500 rotate-180" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -323,6 +434,57 @@ export default function AziendaPage() {
           </div>
         )}
       </main>
+
+      {/* ── Modale PEC ── */}
+      {pecModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
+            <div className="px-6 py-4 border-b border-slate-700 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-red-300 font-semibold">
+                  <Mail size={16} />
+                  Bozza PEC — {pecModal.adTitolo}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">25 crediti scalati · Rivedi il testo prima di inviare</div>
+              </div>
+              <button onClick={() => setPecModal(null)} className="text-slate-500 hover:text-white transition-colors shrink-0">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="px-6 py-4 overflow-y-auto flex-1">
+              <div className="mb-3">
+                <div className="text-xs text-slate-400 uppercase tracking-wide mb-1">Oggetto</div>
+                <div className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-medium">
+                  {pecModal.pec.oggetto}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-400 uppercase tracking-wide mb-1">Testo PEC</div>
+                <pre className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-200 whitespace-pre-wrap font-sans leading-relaxed">
+                  {pecModal.pec.corpo}
+                </pre>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-700 flex gap-3">
+              <button
+                onClick={copyPec}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-4 py-2 rounded-xl transition-colors text-sm"
+              >
+                <Copy size={14} />
+                {pecCopied ? 'Copiato!' : 'Copia testo'}
+              </button>
+              <button
+                onClick={() => setPecModal(null)}
+                className="text-slate-400 hover:text-white px-4 py-2 transition-colors text-sm"
+              >
+                Chiudi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

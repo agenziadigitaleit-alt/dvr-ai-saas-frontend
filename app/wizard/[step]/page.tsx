@@ -1,10 +1,11 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Trash2, Loader2 } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Plus, Trash2, Loader2, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 import { STEPS } from './stepConfig';
+import { aggiornaDVRParziale } from '@/lib/api';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -12,11 +13,18 @@ function getSessionId() {
   try { return sessionStorage.getItem('sessione_id') ?? ''; } catch { return ''; }
 }
 
+function getAuthHeaders(): Record<string, string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+}
+
 async function saveStep(sessionId: string, step: number, data: Record<string, unknown>) {
   if (!sessionId) return;
   await fetch(`/api/proxy/wizard/sessione/${sessionId}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getAuthHeaders(),
     body: JSON.stringify({ step, data }),
   });
 }
@@ -92,6 +100,27 @@ export default function StepPage() {
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [genProgress, setGenProgress] = useState<{ titolo: string; n: number; totale: number } | null>(null);
+  const [existingDvrId, setExistingDvrId] = useState<string | null>(null);
+  const [stepsModificati, setStepsModificati] = useState<string[]>([]);
+  const [dichiarazioneAccettata, setDichiarazioneAccettata] = useState(false);
+  const [dataRegolarizzazione, setDataRegolarizzazione] = useState('');
+
+  // Calcolo adempimenti aperti (basato su allData, disponibile nelle callback)
+  const adempimentiAperti = useMemo<string[]>(() => {
+    if (stepNum !== 13) return [];
+    const s08 = (allData[8] ?? {}) as Record<string, unknown>;
+    const s09 = (allData[9] ?? {}) as Record<string, unknown>;
+    const s10 = (allData[10] ?? {}) as Record<string, unknown>;
+    const items: string[] = [];
+    if (s08.sorveglianza_sanitaria === false) items.push('Sorveglianza sanitaria — visite mediche obbligatorie non ancora effettuate (art. 41 D.Lgs. 81/08)');
+    if (s09.formazione_effettuata === false) items.push('Formazione sicurezza lavoratori non ancora completata (art. 36-37 D.Lgs. 81/08)');
+    if (s09.piano_emergenza === false) items.push('Piano di emergenza ed evacuazione non ancora adottato (art. 43 D.Lgs. 81/08)');
+    if (s09.estintori_certificati === false) items.push('Estintori non ancora verificati/certificati (D.M. 10/03/1998)');
+    if (s10.duvri_necessario === true) items.push('DUVRI (Documento Unico Valutazione Rischi Interferenziali) da redigere con appaltatori (art. 26 D.Lgs. 81/08)');
+    return items;
+  }, [stepNum, allData]);
+  const hasDichiarazioneCalc = adempimentiAperti.length > 0;
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load persisted data
@@ -105,6 +134,29 @@ export default function StepPage() {
       }
     } catch { /* ignore */ }
   }, [stepNum]);
+
+  // Detecta DVR esistente e step modificati (solo step 13)
+  useEffect(() => {
+    if (stepNum !== 13) return;
+    try {
+      const dvrId = sessionStorage.getItem('dvr_id');
+      setExistingDvrId(dvrId);
+      if (!dvrId) return;
+      // Confronta wizard_data corrente con snapshot salvato al momento della generazione
+      const rawSnapshot = sessionStorage.getItem('wizard_data_snapshot');
+      const rawCurrent = sessionStorage.getItem('wizard_data');
+      if (!rawSnapshot || !rawCurrent) return;
+      const snapshot = JSON.parse(rawSnapshot) as Record<number, Record<string, unknown>>;
+      const current = JSON.parse(rawCurrent) as Record<number, Record<string, unknown>>;
+      const modificati: string[] = [];
+      for (let s = 1; s <= 12; s++) {
+        const snap = JSON.stringify(snapshot[s] ?? {});
+        const curr = JSON.stringify(current[s] ?? {});
+        if (snap !== curr) modificati.push(`step${String(s).padStart(2, '0')}`);
+      }
+      setStepsModificati(modificati);
+    } catch { /* ignore */ }
+  }, [stepNum, allData]);
 
   const set = useCallback((key: string, val: unknown) => {
     setFormData(prev => {
@@ -157,51 +209,75 @@ export default function StepPage() {
     setGenerating(true);
     setGenError(null);
     setGenProgress(null);
-    const sessionId = getSessionId();
+    let sessionId = getSessionId();
+
+    if (!sessionId) {
+      try {
+        const initRes = await fetch('/api/proxy/wizard/sessione', { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({}) });
+        if (initRes.ok) {
+          const d = await initRes.json();
+          sessionId = d.sessione_id;
+          try { sessionStorage.setItem('sessione_id', sessionId); } catch {}
+        }
+      } catch {}
+    }
+
     try {
       await saveStep(sessionId, stepNum, formData);
 
-      // Use SSE stream endpoint
-      const res = await fetch(`/api/proxy/dvr/genera/${sessionId}/stream`, { method: 'POST' });
-      if (!res.ok) throw new Error(`Errore avvio generazione: ${res.status}`);
-      if (!res.body) throw new Error('Stream non disponibile');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let dvrId: string | null = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const evt = JSON.parse(line.slice(6)) as {
-              tipo: string;
-              titolo?: string;
-              n?: number;
-              totale?: number;
-              dvr_id?: string;
-              messaggio?: string;
-            };
-            if (evt.tipo === 'progresso' && evt.titolo && evt.n && evt.totale) {
-              setGenProgress({ titolo: evt.titolo, n: evt.n, totale: evt.totale });
-            } else if (evt.tipo === 'completato' && evt.dvr_id) {
-              dvrId = evt.dvr_id;
-            } else if (evt.tipo === 'errore') {
-              throw new Error(evt.messaggio ?? 'Errore generazione');
-            }
-          } catch { /* ignore malformed events */ }
-        }
+      // Avvia generazione in background
+      const bodyPayload: Record<string, unknown> = {};
+      if (hasDichiarazioneCalc && dichiarazioneAccettata && dataRegolarizzazione) {
+        bodyPayload.dichiarazione_responsabilita = {
+          adempimenti_aperti: adempimentiAperti,
+          data_regolarizzazione: dataRegolarizzazione,
+          accettata: true,
+        };
       }
+      const res = await fetch(`/api/proxy/dvr/genera/${sessionId}`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyPayload),
+      });
+      if (!res.ok) throw new Error(`Errore avvio generazione: ${res.status}`);
+      const { dvr_id: dvrId } = await res.json() as { dvr_id: string };
+      if (!dvrId) throw new Error('ID DVR non ricevuto');
 
-      if (!dvrId) throw new Error('ID DVR non ricevuto dallo stream');
       sessionStorage.setItem('dvr_id', dvrId);
+      setGenProgress({ titolo: 'Generazione in corso...', n: 1, totale: 4 });
+
+      // Polling ogni 8 secondi
+      let tentativi = 0;
+      const maxTentativi = 45; // ~6 minuti
+      await new Promise<void>((resolve, reject) => {
+        const intervallo = setInterval(async () => {
+          tentativi++;
+          try {
+            const r = await fetch(`/api/proxy/dvr/${dvrId}/stato`, { headers: getAuthHeaders() });
+            if (!r.ok) return;
+            const stato = await r.json() as { stato: string; docx_pronto: boolean; errore?: string };
+
+            if (stato.stato === 'in_coda') {
+              setGenProgress({ titolo: 'In coda...', n: 0, totale: 4 });
+            } else if (stato.stato === 'in_corso') {
+              setGenProgress({ titolo: 'Generazione in corso...', n: 2, totale: 4 });
+            } else if (stato.stato === 'completato' && stato.docx_pronto) {
+              clearInterval(intervallo);
+              resolve();
+            } else if (stato.stato === 'errore') {
+              clearInterval(intervallo);
+              reject(new Error(stato.errore ?? 'Errore generazione DVR'));
+            } else if (tentativi >= maxTentativi) {
+              clearInterval(intervallo);
+              reject(new Error('Timeout: generazione troppo lunga'));
+            }
+          } catch { /* retry al prossimo tick */ }
+        }, 8000);
+      });
+
+      // Salva snapshot per rilevare future modifiche
+      try { sessionStorage.setItem('wizard_data_snapshot', sessionStorage.getItem('wizard_data') ?? '{}'); } catch {}
+
       router.push(`/dvr/${dvrId}`);
     } catch (e: unknown) {
       setGenError(e instanceof Error ? e.message : 'Errore sconosciuto');
@@ -210,15 +286,80 @@ export default function StepPage() {
     }
   }, [stepNum, formData, router]);
 
+  const updateDVRParziale = useCallback(async () => {
+    if (!existingDvrId || stepsModificati.length === 0) return;
+    setGenerating(true);
+    setGenError(null);
+    setGenProgress({ titolo: 'Preparazione aggiornamento...', n: 1, totale: 3 });
+
+    try {
+      // Costruisce wizard_data nel formato atteso dal backend
+      const rawData = sessionStorage.getItem('wizard_data');
+      const allStepData = rawData ? JSON.parse(rawData) as Record<number, Record<string, unknown>> : {};
+      const wizardPayload: Record<string, unknown> = {};
+      for (let s = 1; s <= 13; s++) {
+        wizardPayload[`step${String(s).padStart(2, '0')}`] = allStepData[s] ?? {};
+      }
+
+      setGenProgress({ titolo: 'Rigenero sezioni modificate...', n: 2, totale: 3 });
+
+      await aggiornaDVRParziale(existingDvrId, stepsModificati, wizardPayload);
+
+      // Polling stato
+      let tentativi = 0;
+      const maxTentativi = 30;
+      await new Promise<void>((resolve, reject) => {
+        const intervallo = setInterval(async () => {
+          tentativi++;
+          try {
+            const r = await fetch(`/api/proxy/dvr/${existingDvrId}/stato`, {
+              headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token') ?? ''}` },
+            });
+            if (!r.ok) return;
+            const stato = await r.json() as { stato: string; docx_pronto: boolean; errore?: string };
+            if (stato.stato === 'completato' && stato.docx_pronto) {
+              clearInterval(intervallo);
+              resolve();
+            } else if (stato.stato === 'errore') {
+              clearInterval(intervallo);
+              reject(new Error(stato.errore ?? 'Errore aggiornamento DVR'));
+            } else if (tentativi >= maxTentativi) {
+              clearInterval(intervallo);
+              reject(new Error('Timeout aggiornamento'));
+            }
+          } catch { /* retry */ }
+        }, 6000);
+      });
+
+      // Aggiorna snapshot
+      try { sessionStorage.setItem('wizard_data_snapshot', sessionStorage.getItem('wizard_data') ?? '{}'); } catch {}
+      setStepsModificati([]);
+
+      router.push(`/dvr/${existingDvrId}`);
+    } catch (e: unknown) {
+      setGenError(e instanceof Error ? e.message : 'Errore sconosciuto');
+      setGenerating(false);
+      setGenProgress(null);
+    }
+  }, [existingDvrId, stepsModificati, router]);
+
   // Register callbacks for layout footer buttons
   useEffect(() => {
     (window as unknown as Record<string, unknown>).__wizardSaveAndAdvance = saveAndAdvance;
     (window as unknown as Record<string, unknown>).__wizardGenerateDVR = generateDVR;
+    (window as unknown as Record<string, unknown>).__wizardUpdateDVR = updateDVRParziale;
+    // Esponi stato per il layout
+    (window as unknown as Record<string, unknown>).__wizardExistingDvrId = existingDvrId;
+    (window as unknown as Record<string, unknown>).__wizardStepsModificati = stepsModificati;
+    window.dispatchEvent(new CustomEvent('wizard:updatestate', {
+      detail: { existingDvrId, stepsModificati }
+    }));
     return () => {
       delete (window as unknown as Record<string, unknown>).__wizardSaveAndAdvance;
       delete (window as unknown as Record<string, unknown>).__wizardGenerateDVR;
+      delete (window as unknown as Record<string, unknown>).__wizardUpdateDVR;
     };
-  }, [saveAndAdvance, generateDVR]);
+  }, [saveAndAdvance, generateDVR, updateDVRParziale, existingDvrId, stepsModificati]);
 
   // Communicate completion status to layout footer (step 13 only)
   useEffect(() => {
@@ -415,6 +556,11 @@ export default function StepPage() {
     }
     const isComplete = missingByStep.length === 0;
 
+    // Usa variabili calcolate con useMemo (disponibili nello scope del componente)
+    const hasDichiarazione = hasDichiarazioneCalc;
+    // La generazione è abilitata solo se: form completo E (nessun adempimento aperto O dichiarazione accettata con data)
+    const canGenerate = isComplete && (!hasDichiarazione || (dichiarazioneAccettata && dataRegolarizzazione.trim() !== ''));
+
     return (
       <div className="space-y-4">
         <div className="card">
@@ -451,6 +597,72 @@ export default function StepPage() {
           </div>
         )}
 
+        {/* Dichiarazione responsabilità per adempimenti non ancora attuati */}
+        {hasDichiarazione && (
+          <div className="bg-red-50 border border-red-300 rounded-xl px-5 py-5 text-sm">
+            <div className="flex items-start gap-3 mb-4">
+              <span className="text-2xl">⚠️</span>
+              <div>
+                <p className="font-bold text-red-800 text-base mb-1">Adempimenti obbligatori non ancora attuati</p>
+                <p className="text-red-700">
+                  Sono stati rilevati obblighi di legge non ancora adempiuti. Prima di procedere con la generazione del DVR,
+                  il Datore di Lavoro deve sottoscrivere la dichiarazione di assunzione di responsabilità.
+                </p>
+              </div>
+            </div>
+
+            <ul className="space-y-2 mb-5">
+              {adempimentiAperti.map((item, i) => (
+                <li key={i} className="flex items-start gap-2 text-red-800">
+                  <span className="mt-0.5 text-red-500 shrink-0">•</span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+
+            <div className="bg-white border border-red-200 rounded-xl p-4 space-y-4">
+              <p className="font-semibold text-slate-700 text-sm">
+                Dichiarazione del Datore di Lavoro — art. 17 e art. 55 D.Lgs. 81/08
+              </p>
+              <p className="text-slate-600 text-xs leading-relaxed">
+                Il sottoscritto Datore di Lavoro, consapevole delle responsabilità civili (art. 2087 c.c.) e penali
+                (art. 55 D.Lgs. 81/08, art. 589-590 c.p.) derivanti dalla mancata attuazione degli adempimenti
+                sopra indicati, dichiara di voler procedere alla redazione del DVR pur in presenza di tali
+                inadempimenti e si impegna formalmente a regolarizzare la propria posizione entro la data indicata.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Data entro cui ci si impegna a regolarizzare <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={dataRegolarizzazione}
+                  onChange={e => setDataRegolarizzazione(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="input-base w-48 text-sm"
+                />
+              </div>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={dichiarazioneAccettata}
+                  onChange={e => setDichiarazioneAccettata(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 rounded border-slate-300 text-red-600 focus:ring-red-500 shrink-0"
+                />
+                <span className="text-xs text-slate-700 leading-relaxed">
+                  <strong>Dichiaro</strong> di essere consapevole degli obblighi di legge non ancora adempiuti,
+                  mi assumo la piena responsabilità civile e penale per il periodo di inadempimento e mi impegno
+                  a regolarizzare la mia posizione entro la data indicata. Questa dichiarazione sarà inclusa
+                  nel DVR come allegato firmato.
+                </span>
+              </label>
+              {hasDichiarazione && dichiarazioneAccettata && !dataRegolarizzazione && (
+                <p className="text-xs text-red-600">Inserisci la data di regolarizzazione per procedere.</p>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="card text-center">
           <p className="text-slate-600 mb-4">
             {isComplete
@@ -459,7 +671,7 @@ export default function StepPage() {
           </p>
           <button
             onClick={generateDVR}
-            disabled={generating || !isComplete}
+            disabled={generating || !canGenerate}
             className="inline-flex items-center gap-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-lg py-4 px-8 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {generating ? <><Loader2 size={22} className="animate-spin" /> Generazione in corso…</> : '🤖 Genera DVR con AI'}

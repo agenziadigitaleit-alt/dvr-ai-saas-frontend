@@ -16,7 +16,12 @@ async function handler(req: NextRequest, { params }: { params: { path: string[] 
 
   let body: BodyInit | null = null;
   if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
-    body = await req.arrayBuffer() as BodyInit;
+    try {
+      const ab = await req.arrayBuffer();
+      body = ab.byteLength > 0 ? (ab as BodyInit) : null;
+    } catch {
+      body = null;
+    }
   }
 
   try {

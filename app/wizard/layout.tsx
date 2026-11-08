@@ -2,7 +2,7 @@
 
 import { useParams, useRouter, usePathname } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 
 const TOTAL_STEPS = 13;
@@ -17,6 +17,8 @@ export default function WizardLayout({ children }: { children: React.ReactNode }
 
   const [saving, setSaving] = useState(false);
   const [step13Ready, setStep13Ready] = useState(false);
+  const [existingDvrId, setExistingDvrId] = useState<string | null>(null);
+  const [stepsModificati, setStepsModificati] = useState<string[]>([]);
   const saveRef = useRef<(() => void) | null>(null);
 
   // Expose a way for step forms to register their save function
@@ -55,6 +57,17 @@ export default function WizardLayout({ children }: { children: React.ReactNode }
     };
     window.addEventListener('wizard:step13ready', handler);
     return () => window.removeEventListener('wizard:step13ready', handler);
+  }, []);
+
+  // Listen for update state (existing DVR + steps modificati)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ev = e as CustomEvent;
+      setExistingDvrId(ev.detail?.existingDvrId ?? null);
+      setStepsModificati(ev.detail?.stepsModificati ?? []);
+    };
+    window.addEventListener('wizard:updatestate', handler);
+    return () => window.removeEventListener('wizard:updatestate', handler);
   }, []);
 
   const isWizardStep = /^\/wizard\/\d+$/.test(pathname ?? '');
@@ -122,16 +135,34 @@ export default function WizardLayout({ children }: { children: React.ReactNode }
               Avanti <ChevronRight size={18} />
             </button>
           ) : (
-            <button
-              onClick={() => {
-                const fn = (window as unknown as Record<string, unknown>).__wizardGenerateDVR;
-                if (typeof fn === 'function') (fn as () => void)();
-              }}
-              disabled={!step13Ready}
-              className="flex items-center gap-2 btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              🤖 Genera DVR con AI
-            </button>
+            <div className="flex items-center gap-3">
+              {/* Pulsante aggiornamento parziale — visibile solo se esiste un DVR e ci sono modifiche */}
+              {existingDvrId && stepsModificati.length > 0 && (
+                <button
+                  onClick={() => {
+                    const fn = (window as unknown as Record<string, unknown>).__wizardUpdateDVR;
+                    if (typeof fn === 'function') (fn as () => void)();
+                  }}
+                  disabled={!step13Ready}
+                  className="flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white font-semibold px-4 py-2 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={`Rigenera solo: ${stepsModificati.join(', ')} (10 crediti)`}
+                >
+                  <RefreshCw size={16} />
+                  Aggiorna DVR
+                  <span className="text-xs opacity-80 ml-1">(10 cr)</span>
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  const fn = (window as unknown as Record<string, unknown>).__wizardGenerateDVR;
+                  if (typeof fn === 'function') (fn as () => void)();
+                }}
+                disabled={!step13Ready}
+                className="flex items-center gap-2 btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                🤖 {existingDvrId ? 'Rigenera DVR (150 cr)' : 'Genera DVR con AI'}
+              </button>
+            </div>
           )}
         </div>
       </footer>

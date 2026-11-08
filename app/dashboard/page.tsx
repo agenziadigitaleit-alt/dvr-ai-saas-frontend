@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Shield, Plus, Building2, Users, LogOut, ChevronRight, TrendingUp } from 'lucide-react';
-import { getAziende, creaAzienda, Azienda } from '@/lib/api';
+import { Shield, Plus, Building2, Users, LogOut, ChevronRight, TrendingUp, Calendar, Wallet, Bell } from 'lucide-react';
+import { getAziende, creaAzienda, getWallet, getNotifiche, Azienda } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 
 export default function DashboardPage() {
   const router = useRouter();
   const { user, logout, loading: authLoading } = useAuth();
   const [aziende, setAziende] = useState<Azienda[]>([]);
+  const [saldoWallet, setSaldoWallet] = useState<number | null>(null);
+  const [nNotifiche, setNNotifiche] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [nuovaRagioneSociale, setNuovaRagioneSociale] = useState('');
@@ -25,7 +27,13 @@ export default function DashboardPage() {
   useEffect(() => {
     if (user) {
       getAziende()
-        .then(setAziende)
+        .then(list => {
+          setAziende(list);
+          if (list.length > 0) {
+            getWallet(list[0].id).then(w => setSaldoWallet(w.saldo)).catch(() => {});
+          }
+          getNotifiche(5).then(nn => setNNotifiche(nn.filter((n: {stato: string}) => n.stato !== 'saltata').length)).catch(() => {});
+        })
         .catch(() => {})
         .finally(() => setLoading(false));
     }
@@ -74,6 +82,44 @@ export default function DashboardPage() {
           <span className="bg-blue-900/50 text-blue-300 text-xs px-2 py-1 rounded-full border border-blue-800">
             {user?.ruolo}
           </span>
+          <button
+            onClick={() => router.push('/wallet')}
+            className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+              saldoWallet === 0
+                ? 'border-red-700 bg-red-900/30 text-red-300 hover:bg-red-900/50'
+                : saldoWallet !== null && saldoWallet < 50
+                ? 'border-orange-700 bg-orange-900/30 text-orange-300 hover:bg-orange-900/50'
+                : 'border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-600 hover:text-white'
+            }`}
+          >
+            <Wallet size={14} />
+            {saldoWallet !== null ? `${saldoWallet} cr` : 'Wallet'}
+          </button>
+          <button
+            onClick={() => router.push('/scadenzario')}
+            className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors"
+          >
+            <Calendar size={16} />
+            Scadenzario
+          </button>
+          {(aziende.length > 1 || user?.ruolo === 'rspp') && (
+            <button
+              onClick={() => router.push('/admin')}
+              className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors"
+            >
+              <Building2 size={16} />
+              Studio
+            </button>
+          )}
+          {user?.ruolo === 'platform_admin' && (
+            <button
+              onClick={() => router.push('/superadmin')}
+              className="flex items-center gap-1.5 text-sm bg-violet-900/40 text-violet-300 border border-violet-800 hover:bg-violet-800/50 px-2.5 py-1 rounded-lg transition-colors"
+            >
+              <Shield size={14} />
+              Superadmin
+            </button>
+          )}
           {user?.ruolo === 'rspp' && (
             <button
               onClick={() => router.push('/rspp/provvigioni')}
@@ -83,6 +129,17 @@ export default function DashboardPage() {
               Provvigioni
             </button>
           )}
+          <button
+            onClick={() => router.push('/notifiche')}
+            className="relative text-slate-400 hover:text-white transition-colors"
+          >
+            <Bell size={18} />
+            {nNotifiche > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
+                {nNotifiche > 9 ? '9+' : nNotifiche}
+              </span>
+            )}
+          </button>
           <button onClick={logout} className="text-slate-400 hover:text-white transition-colors">
             <LogOut size={18} />
           </button>

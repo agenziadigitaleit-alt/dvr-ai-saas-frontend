@@ -1,30 +1,12 @@
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Shield, Clock, FileText } from 'lucide-react';
 
 export default function HomePage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleNuovoDVR() {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/proxy/wizard/sessione', { method: 'POST' });
-      if (!res.ok) throw new Error(`Errore server: ${res.status}`);
-      const data = await res.json();
-      const id = data.sessione_id ?? data.id;
-      if (!id) throw new Error('ID sessione non ricevuto');
-      sessionStorage.setItem('sessione_id', String(id));
-      router.push(`/wizard/1`);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Errore sconosciuto';
-      setError(msg);
-      setLoading(false);
-    }
+async function handleNuovoDVR() {
+    router.push('/login');
   }
 
   return (
@@ -53,27 +35,11 @@ export default function HomePage() {
 
           <button
             onClick={handleNuovoDVR}
-            disabled={loading}
-            className="inline-flex items-center gap-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-lg py-4 px-8 rounded-xl transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-lg shadow-blue-900/40"
+            className="inline-flex items-center gap-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-lg py-4 px-8 rounded-xl transition-colors shadow-lg shadow-blue-900/40"
           >
-            {loading ? (
-              <>
-                <span className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
-                Avvio in corso...
-              </>
-            ) : (
-              <>
-                Inizia nuovo DVR
-                <ArrowRight size={20} />
-              </>
-            )}
+            Inizia nuovo DVR
+            <ArrowRight size={20} />
           </button>
-
-          {error && (
-            <div className="mt-6 bg-red-900/40 border border-red-700 text-red-300 rounded-lg px-4 py-3 text-sm">
-              {error}
-            </div>
-          )}
 
           {/* Feature pills */}
           <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-4 text-left">

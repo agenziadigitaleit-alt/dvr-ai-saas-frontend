@@ -14,6 +14,8 @@ interface BackendDvrResponse {
   sessione_id: string;
   sezioni: Record<string, unknown>;
   pdf_path?: string;
+  docx_path?: string;
+  stato_generazione?: string;
   created_at: string;
 }
 
@@ -146,58 +148,89 @@ export default function DvrPage() {
   const [dvr, setDvr] = useState<DvrData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [pdfLoading, setPdfLoading] = useState(false);
-  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [docxLoading, setDocxLoading] = useState(false);
+  const [docxError, setDocxError] = useState<string | null>(null);
+  const [statoGen, setStatoGen] = useState<string | null>(null);
 
   useEffect(() => {
     if (!dvrId) return;
-    fetch(`/api/proxy/dvr/${dvrId}`)
-      .then(r => { if (!r.ok) throw new Error(`Errore ${r.status}`); return r.json(); })
-      .then((data: BackendDvrResponse) => {
-        setDvr({
-          id: data.dvr_id,
-          data_generazione: data.created_at?.split('T')[0],
-          sezioni: parseSections(data.sezioni ?? {}),
-        });
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    // Polling finché non è completato
+    const poll = async () => {
+      try {
+        const statoRes = await fetch(`/api/proxy/dvr/${dvrId}/stato`, { headers });
+        if (statoRes.ok) {
+          const s = await statoRes.json() as { stato: string; docx_pronto: boolean };
+          setStatoGen(s.stato);
+          if (s.stato === 'in_coda' || s.stato === 'in_corso') {
+            setTimeout(poll, 6000);
+            return;
+          }
+        }
+      } catch { /* ignora */ }
+
+      // Carica dati DVR
+      fetch(`/api/proxy/dvr/${dvrId}`, { headers })
+        .then(r => { if (!r.ok) throw new Error(`Errore ${r.status}`); return r.json(); })
+        .then((data: BackendDvrResponse) => {
+          setStatoGen(data.stato_generazione ?? 'completato');
+          setDvr({
+            id: data.dvr_id,
+            data_generazione: data.created_at?.split('T')[0],
+            sezioni: parseSections(data.sezioni ?? {}),
+          });
+        })
+        .catch((e: Error) => setError(e.message))
+        .finally(() => setLoading(false));
+    };
+
+    poll();
   }, [dvrId]);
 
-  async function handleDownloadPdf() {
-    setPdfLoading(true);
-    setPdfError(null);
+  async function handleDownloadDocx() {
+    setDocxLoading(true);
+    setDocxError(null);
     try {
-      // Generate PDF
-      const genRes = await fetch(`/api/proxy/dvr/${dvrId}/pdf`, { method: 'POST' });
-      if (!genRes.ok) throw new Error(`Errore generazione PDF: ${genRes.status}`);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      // Download PDF
-      const dlRes = await fetch(`/api/proxy/dvr/${dvrId}/pdf`);
-      if (!dlRes.ok) throw new Error(`Errore download PDF: ${dlRes.status}`);
+      const dlRes = await fetch(`/api/proxy/dvr/${dvrId}/download`, { headers });
+      if (!dlRes.ok) throw new Error(`Errore download: ${dlRes.status}`);
 
       const blob = await dlRes.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `DVR_${dvr?.ragione_sociale ?? dvrId}.pdf`;
+      const cd = dlRes.headers.get('content-disposition');
+      const nome = cd ? cd.split('filename=')[1]?.replace(/"/g, '') : `DVR_${dvrId}.docx`;
+      a.download = nome ?? `DVR_${dvrId}.docx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (e: unknown) {
-      setPdfError(e instanceof Error ? e.message : 'Errore sconosciuto');
+      setDocxError(e instanceof Error ? e.message : 'Errore sconosciuto');
     } finally {
-      setPdfLoading(false);
+      setDocxLoading(false);
     }
   }
 
   if (loading) {
+    const msgStato = statoGen === 'in_coda' ? 'DVR in coda di generazione…'
+      : statoGen === 'in_corso' ? 'Generazione DVR in corso (2–4 min)…'
+      : 'Caricamento DVR…';
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center">
           <Loader2 size={40} className="animate-spin text-blue-600 mx-auto mb-4" />
-          <p className="text-slate-600">Caricamento DVR…</p>
+          <p className="text-slate-600">{msgStato}</p>
+          {(statoGen === 'in_coda' || statoGen === 'in_corso') && (
+            <p className="text-slate-400 text-sm mt-2">Puoi chiudere questa pagina e tornare più tardi.</p>
+          )}
         </div>
       </div>
     );
@@ -227,13 +260,13 @@ export default function DvrPage() {
             </span>
           </div>
           <button
-            onClick={handleDownloadPdf}
-            disabled={pdfLoading}
+            onClick={handleDownloadDocx}
+            disabled={docxLoading || statoGen === 'in_corso' || statoGen === 'in_coda'}
             className="flex items-center gap-2 btn-primary text-sm"
           >
-            {pdfLoading
-              ? <><Loader2 size={16} className="animate-spin" /> Generazione PDF…</>
-              : <><Download size={16} /> Scarica PDF</>}
+            {docxLoading
+              ? <><Loader2 size={16} className="animate-spin" /> Download…</>
+              : <><Download size={16} /> Scarica DOCX</>}
           </button>
         </div>
       </header>
@@ -253,10 +286,10 @@ export default function DvrPage() {
           )}
         </div>
 
-        {/* PDF error */}
-        {pdfError && (
+        {/* DOCX error */}
+        {docxError && (
           <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
-            {pdfError}
+            {docxError}
           </div>
         )}
 
@@ -270,11 +303,11 @@ export default function DvrPage() {
         {/* Bottom actions */}
         <div className="flex flex-col sm:flex-row gap-3 pt-2">
           <button
-            onClick={handleDownloadPdf}
-            disabled={pdfLoading}
+            onClick={handleDownloadDocx}
+            disabled={docxLoading || statoGen === 'in_corso' || statoGen === 'in_coda'}
             className="flex items-center justify-center gap-2 btn-primary text-base py-3 px-6"
           >
-            {pdfLoading ? <><Loader2 size={18} className="animate-spin" /> Generazione PDF…</> : <><Download size={18} /> ⬇ Scarica PDF</>}
+            {docxLoading ? <><Loader2 size={18} className="animate-spin" /> Download…</> : <><Download size={18} /> ⬇ Scarica DOCX</>}
           </button>
           <button
             onClick={() => router.push('/')}

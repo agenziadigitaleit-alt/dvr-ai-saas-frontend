@@ -27,6 +27,8 @@ export const STEPS: Record<number, StepConfig> = {
       { key: 'n_dipendenti', label: 'Numero dipendenti', type: 'number', required: true },
       { key: 'datore_lavoro', label: 'Datore di lavoro', type: 'text', required: true },
       { key: 'mc_medico_competente', label: 'Medico competente (opzionale)', type: 'text' },
+      { key: 'videosorveglianza', label: 'Impianto di videosorveglianza presente in azienda (art. 4 L. 300/1970)', type: 'checkbox' },
+      { key: 'videosorveglianza_denunciata', label: 'Se sì: l\'impianto è stato regolarmente autorizzato dall\'Ispettorato Nazionale del Lavoro (INL)', type: 'checkbox' },
       { key: 'logo', label: 'Logo aziendale (opzionale)', type: 'logo', placeholder: 'Carica il logo in formato PNG o JPG (max 2 MB)' },
     ],
   },
@@ -134,11 +136,13 @@ export const STEPS: Record<number, StepConfig> = {
     description: 'Nominativi delle figure obbligatorie per legge (D.Lgs. 81/08).',
     fields: [
       { key: 'rspp_nome', label: 'RSPP — nome e cognome', type: 'text', required: true, placeholder: 'es. Dott. Mario Rossi' },
-      { key: 'rspp_tipo', label: 'RSPP — interno o esterno', type: 'radio', options: ['Interno', 'Esterno'] },
+      { key: 'rspp_tipo', label: 'RSPP — chi ricopre il ruolo (art. 17 D.Lgs. 81/08)', type: 'radio', required: true, options: ['Datore di lavoro (DL-RSPP)', 'Dipendente interno designato', 'Consulente esterno'] },
       { key: 'rls_nome', label: 'RLS — nome e cognome', type: 'text', required: true, placeholder: 'es. Anna Bianchi' },
       { key: 'addetti_antincendio', label: 'Addetti antincendio (aggiungi un nominativo alla volta)', type: 'array', required: true },
       { key: 'addetti_primo_soccorso', label: 'Addetti primo soccorso (aggiungi un nominativo alla volta)', type: 'array', required: true },
       { key: 'mc_nome', label: 'Medico competente — nome e cognome (se presente)', type: 'text', placeholder: 'es. Dott.ssa Carla Marino' },
+      { key: 'ha_preposti', label: 'Sono presenti preposti (capi-reparto, capi-turno)', type: 'checkbox' },
+      { key: 'ha_dirigenti', label: 'Sono presenti dirigenti con delega sicurezza', type: 'checkbox' },
     ],
   },
   13: {
