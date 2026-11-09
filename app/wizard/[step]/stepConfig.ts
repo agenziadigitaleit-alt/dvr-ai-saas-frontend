@@ -1,7 +1,7 @@
 export interface Field {
   key: string;
   label: string;
-  type: 'text' | 'number' | 'select' | 'checkbox' | 'radio' | 'textarea' | 'date' | 'array' | 'multicheckbox' | 'logo';
+  type: 'text' | 'number' | 'select' | 'checkbox' | 'radio' | 'textarea' | 'date' | 'array' | 'multicheckbox' | 'logo' | 'planimetria';
   required?: boolean;
   options?: string[];
   placeholder?: string;
@@ -59,7 +59,10 @@ export const STEPS: Record<number, StepConfig> = {
     description: 'Macchinari e impianti presenti in azienda.',
     fields: [
       { key: 'macchinari', label: 'Lista macchinari (nome, marcatura CE, anno)', type: 'array' },
-      { key: 'impianto_elettrico_certificato', label: 'Impianto elettrico certificato', type: 'checkbox' },
+      { key: 'impianto_elettrico_certificato', label: 'Impianto elettrico certificato (CEI 64-8)', type: 'checkbox' },
+      { key: 'tipo_impianto_messa_a_terra', label: 'Classificazione impianto ai fini DPR 462/2001 (periodicità verifica messa a terra)', type: 'radio', options: ['Ordinario (verifica ogni 2 anni)', 'Maggior rischio / rischio esplosione (verifica ogni anno)'] },
+      { key: 'data_ultima_verifica_messa_a_terra', label: 'Data ultima verifica messa a terra (DPR 462/2001)', type: 'date' },
+      { key: 'ricevuta_messa_a_terra', label: 'Ricevuta verifica messa a terra — ingegnere/organismo certificatore (opzionale)', type: 'planimetria' },
       { key: 'impianto_gas', label: 'Impianto gas presente', type: 'checkbox' },
       { key: 'ascensori', label: 'Ascensori/montacarichi presenti', type: 'checkbox' },
     ],
