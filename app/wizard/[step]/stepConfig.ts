@@ -126,7 +126,7 @@ export const STEPS: Record<number, StepConfig> = {
     title: 'Documenti',
     description: 'Documentazione disponibile.',
     fields: [
-      { key: 'ha_planimetria', label: 'Planimetria dei locali disponibile', type: 'checkbox' },
+      { key: 'planimetria_file', label: 'Planimetria dei locali (opzionale — verrà inserita nel DVR)', type: 'planimetria' },
       { key: 'ha_foto', label: 'Foto dei luoghi di lavoro disponibili', type: 'checkbox' },
       { key: 'note_aggiuntive', label: 'Note aggiuntive', type: 'textarea', placeholder: 'Ulteriori informazioni rilevanti...' },
     ],

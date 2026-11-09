@@ -532,6 +532,48 @@ export default function StepPage() {
         );
       }
 
+      case 'planimetria': {
+        const planVal = typeof val === 'string' ? val : '';
+        return (
+          <div key={field.key}>
+            <label className="block text-sm font-medium text-slate-700 mb-1">{field.label}</label>
+            <div className="flex flex-col gap-3">
+              {planVal ? (
+                <div className="flex flex-col gap-2">
+                  <img src={planVal} alt="Planimetria" className="max-h-64 max-w-full object-contain border border-slate-200 rounded-xl p-2 bg-white" />
+                  <button type="button" onClick={() => set(field.key, '')}
+                    className="self-start text-red-400 hover:text-red-600 flex items-center gap-1 text-sm">
+                    <Trash2 size={14} /> Rimuovi planimetria
+                  </button>
+                </div>
+              ) : (
+                <div className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center bg-slate-50">
+                  <p className="text-slate-500 text-sm mb-1 font-medium">Nessuna planimetria caricata</p>
+                  <p className="text-slate-400 text-xs mb-3">Se disponibile, verrà inserita nella sezione "Layout Emergenza" del DVR</p>
+                  <label className="cursor-pointer btn-secondary inline-flex items-center gap-2 text-sm px-4 py-2">
+                    <Plus size={15} /> Carica planimetria (PNG / JPG / PDF, max 10 MB)
+                    <input type="file" accept="image/png,image/jpeg,image/jpg,application/pdf" className="sr-only"
+                      onChange={e => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (file.size > 10 * 1024 * 1024) { alert('File troppo grande (max 10 MB)'); return; }
+                        if (file.type === 'application/pdf') {
+                          alert('Per i PDF: converti prima in immagine (PNG/JPG) e ricarica.');
+                          return;
+                        }
+                        const reader = new FileReader();
+                        reader.onload = ev => set(field.key, ev.target?.result as string);
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
       default:
         return null;
     }
